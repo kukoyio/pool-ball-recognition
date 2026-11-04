@@ -128,11 +128,112 @@ void validateGroundTruth()
 	cout << endl;
 }
 
+// ---------------------------------------------------------------------------
+// Table corners in the ORIGINAL image, as supplied with the assignment.
+// The assignment gives them as (row, column); rowColumnToPoint() converts
+// them to OpenCV's (x = column, y = row) order in one place.
+// ---------------------------------------------------------------------------
+Point2f rowColumnToPoint(float row, float column)
+{
+	return Point2f(column, row);
+}
+
+// Builds the 3x3 homography that maps the original (oblique) image onto a
+// top-down view of the table where 1 pixel == 1 mm.
+Mat computeTableHomography()
+{
+	// Source corners in a fixed order: top-left, top-right, bottom-right, bottom-left.
+	vector<Point2f> source_corners =
+	{
+		rowColumnToPoint(35, 337),     // top-left
+		rowColumnToPoint(21, 1570),    // top-right
+		rowColumnToPoint(451, 1888),   // bottom-right
+		rowColumnToPoint(472, 38)      // bottom-left
+	};
+
+	// Destination corners in the SAME order: the corners of the output image.
+	vector<Point2f> destination_corners =
+	{
+		Point2f(0, 0),
+		Point2f(TABLE_COLUMNS - 1, 0),
+		Point2f(TABLE_COLUMNS - 1, TABLE_ROWS - 1),
+		Point2f(0, TABLE_ROWS - 1)
+	};
+
+	return getPerspectiveTransform(source_corners, destination_corners);
+}
+
+// Produces the top-down view (TABLE_ROWS x TABLE_COLUMNS pixels).
+Mat warpToTable(const Mat& original_image, const Mat& homography)
+{
+	Mat warped_image;
+	warpPerspective(original_image, warped_image, homography,
+		Size(TABLE_COLUMNS, TABLE_ROWS), INTER_LINEAR);
+	return warped_image;
+}
+
+// Returns a copy of the original image with the four supplied corners marked
+// and joined by lines (used to check the corners and as a report figure).
+Mat drawTableCorners(const Mat& original_image)
+{
+	Mat marked_image = original_image.clone();
+	vector<Point> corners =
+	{
+		Point(337, 35), Point(1570, 21), Point(1888, 451), Point(38, 472)   // (x, y)
+	};
+	polylines(marked_image, corners, true, Scalar(0, 0, 255), 2);
+	for (const Point& corner : corners)
+	{
+		circle(marked_image, corner, 8, Scalar(0, 255, 255), 2);
+	}
+	return marked_image;
+}
+
+// Returns the ground truth entry for a filename, or nullptr if there is none.
+const GroundTruthImage* findGroundTruth(const string& filename)
+{
+	for (const GroundTruthImage& image : GROUND_TRUTH)
+	{
+		if (filename == image.filename) return &image;
+	}
+	return nullptr;
+}
+
+// Draws each ground-truth ball (circle of true ball size, centre cross, label)
+// onto the transformed image. Impossible positions cannot be drawn and are skipped.
+void drawGroundTruth(Mat& transformed_image, const GroundTruthImage& ground_truth)
+{
+	for (int ball_index = 0; ball_index < NUMBER_OF_BALL_SLOTS; ball_index++)
+	{
+		const GroundTruthBall& ball = ground_truth.balls[ball_index];
+		if (!ball.present || !centreIsPhysicallyPossible(ball))
+		{
+			continue;
+		}
+		Point centre_pixel(cvRound(ball.centre().x), cvRound(ball.centre().y));
+		circle(transformed_image, centre_pixel, cvRound(BALL_RADIUS_MM), Scalar(0, 0, 255), 2);
+		drawMarker(transformed_image, centre_pixel, Scalar(0, 0, 255), MARKER_CROSS, 10, 1);
+		putText(transformed_image, ballLabel(ball_index),
+			Point(centre_pixel.x + 4, centre_pixel.y - 24),
+			FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 255), 2);
+	}
+}
+
+// Shows an image reduced in size so that it fits on screen.
+void showScaled(const string& window_name, const Mat& image, double scale, int window_x, int window_y)
+{
+	Mat reduced_image;
+	resize(image, reduced_image, Size(), scale, scale, INTER_AREA);
+	imshow(window_name, reduced_image);
+	moveWindow(window_name, window_x, window_y);
+}
+
 void MyApplication()
 {
 	validateGroundTruth();
-	char* file_location = "Media/Pool/";
-	char* pool_files[] = {
+
+	const string file_location = "Media/Pool/";
+	const char* pool_files[] = {
 		"AllBalls.jpeg",
 		"Table1.jpeg",
 		"Table2.jpeg",
@@ -141,25 +242,50 @@ void MyApplication()
 		"Table5.jpeg",
 		"Table6.jpeg"
 	};
+	const int number_of_images = sizeof(pool_files) / sizeof(pool_files[0]);
 
-	// Load images
-	int number_of_images = sizeof(pool_files) / sizeof(pool_files[0]);
-	Mat* pool_image = new Mat[number_of_images];
-	//Mat* new_pool_image = new Mat[number_of_images];
-	for (int file_no = 0; (file_no < number_of_images); file_no++)
+	Mat homography = computeTableHomography();
+	cout << "Homography (original -> table):" << endl << homography << endl << endl;
+
+	for (int file_no = 0; file_no < number_of_images; file_no++)
 	{
-		cout << pool_files[file_no] << endl;
-		string filename(file_location);
-		filename.append(pool_files[file_no]);
-		pool_image[file_no] = imread(filename, -1);
+		const string image_name = pool_files[file_no];
+		const string full_path = file_location + image_name;
 
-		if (pool_image[file_no].empty())
+		Mat original_image = imread(full_path, IMREAD_COLOR);
+		if (original_image.empty())
 		{
-			cout << "Could not open " << pool_image[file_no] << endl;
+			cout << "Could not open " << full_path << endl;
+			continue;
 		}
-		imshow(pool_files[file_no], pool_image[file_no]);
 
-		char pause = cv::waitKey();  // This introduces a delay between frame.  The length of the delay/number can be reduced.
+		Mat transformed_image = warpToTable(original_image, homography);
+		Mat original_with_corners = drawTableCorners(original_image);
+
+		// Overlay the ground truth (matched by filename, not by position in a list).
+		Mat transformed_with_truth = transformed_image.clone();
+		const GroundTruthImage* ground_truth = findGroundTruth(image_name);
+		if (ground_truth != nullptr)
+		{
+			drawGroundTruth(transformed_with_truth, *ground_truth);
+		}
+		else
+		{
+			cout << "No ground truth for " << image_name << endl;
+		}
+
+		// Save figures for the report (written to the program's working folder).
+		const string image_stem = image_name.substr(0, image_name.find_last_of('.'));
+		imwrite("result_" + image_stem + "_corners.png", original_with_corners);
+		imwrite("result_" + image_stem + "_transformed.png", transformed_image);
+		imwrite("result_" + image_stem + "_truth.png", transformed_with_truth);
+
+		showScaled(image_name + " - original with corners", original_with_corners, 0.5, 0, 0);
+		showScaled(image_name + " - transformed with ground truth", transformed_with_truth, 0.7, 0, 290);
+		cout << "Showing " << image_name << " (press any key for next, Esc to stop)" << endl;
+		int key = waitKey();
+		destroyAllWindows();
+		if (key == 27) break;
 	}
 
 }
