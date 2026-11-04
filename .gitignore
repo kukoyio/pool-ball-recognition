@@ -1,0 +1,10 @@
+.vs/
+x64/
+*.sdf
+*.suo
+*.VC.db
+*.user
+*.lib
+*.dll
+Media/*
+!Media/Pool/
