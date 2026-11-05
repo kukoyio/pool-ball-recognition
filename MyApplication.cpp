@@ -108,6 +108,13 @@ bool centreIsPhysicallyPossible(const GroundTruthBall& ball)
 		(ball.column >= BALL_RADIUS_MM) && (ball.column <= TABLE_COLUMNS - BALL_RADIUS_MM);
 }
 
+// True if the centre can be drawn at all, i.e. lies inside the transformed image.
+bool centreIsInsideImage(const GroundTruthBall& ball)
+{
+	return (ball.row >= 0) && (ball.row < TABLE_ROWS) &&
+		(ball.column >= 0) && (ball.column < TABLE_COLUMNS);
+}
+
 // Prints ball counts per image and flags impossible ground-truth positions.
 void validateGroundTruth()
 {
@@ -173,7 +180,7 @@ Mat warpToTable(const Mat& original_image, const Mat& homography)
 }
 
 // Returns a copy of the original image with the four supplied corners marked
-// and joined by lines (used to check the corners and as a report figure).
+// and joined by lines 
 Mat drawTableCorners(const Mat& original_image)
 {
 	Mat marked_image = original_image.clone();
@@ -199,14 +206,14 @@ const GroundTruthImage* findGroundTruth(const string& filename)
 	return nullptr;
 }
 
-// Draws each ground-truth ball (circle of true ball size, centre cross, label)
+// Draws each ground-truth ball 
 // onto the transformed image. Impossible positions cannot be drawn and are skipped.
 void drawGroundTruth(Mat& transformed_image, const GroundTruthImage& ground_truth)
 {
 	for (int ball_index = 0; ball_index < NUMBER_OF_BALL_SLOTS; ball_index++)
 	{
 		const GroundTruthBall& ball = ground_truth.balls[ball_index];
-		if (!ball.present || !centreIsPhysicallyPossible(ball))
+		if (!ball.present || !centreIsInsideImage(ball))
 		{
 			continue;
 		}
@@ -262,7 +269,7 @@ void MyApplication()
 		Mat transformed_image = warpToTable(original_image, homography);
 		Mat original_with_corners = drawTableCorners(original_image);
 
-		// Overlay the ground truth (matched by filename, not by position in a list).
+		// Overlay the ground truth
 		Mat transformed_with_truth = transformed_image.clone();
 		const GroundTruthImage* ground_truth = findGroundTruth(image_name);
 		if (ground_truth != nullptr)
@@ -274,7 +281,7 @@ void MyApplication()
 			cout << "No ground truth for " << image_name << endl;
 		}
 
-		// Save figures for the report (written to the program's working folder).
+		// Save figures for the report
 		const string image_stem = image_name.substr(0, image_name.find_last_of('.'));
 		imwrite("result_" + image_stem + "_corners.png", original_with_corners);
 		imwrite("result_" + image_stem + "_transformed.png", transformed_image);
